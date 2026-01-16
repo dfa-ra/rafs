@@ -15,35 +15,12 @@
 
 #define LOG(fmt, ...) pr_info("[" MODULE_NAME "]: " fmt, ##__VA_ARGS__)
 
-// структуры
-struct rafs_file {
-    struct list_head list;       // Связный список
-    char name[256];              // Имя файла
-    ino_t ino;                   // Номер inode
-    ino_t parent_ino;            // Номер inode родительской директории
-    umode_t mode;                // Тип и права доступа
-    char *data;                  // Данные файла (содержимое)
-    size_t size;                 // Размер данных файла
-    size_t capacity;             // Емкость буфера данных
-    unsigned int link_count;     // Количество жестких ссылок
-};
-
-
-struct rafs_sb_info {
-    struct list_head file_list;  // Список файлов
-    struct rw_semaphore rwsem;   // Семафор для синхронизации
-    ino_t next_ino;              // Следующий свободный номер ноды
-};
+// Выбор backend при компиляции определяется в Makefile или командной строке
+// #define RAFS_BACKEND_RAM  // RAM backend (in-memory)
+// #define RAFS_BACKEND_NET  // NET backend (будет добавлен позже)
 
 
 // функции для работы с файлами в file.c
-struct rafs_file* rafs_file_find(struct super_block *sb, ino_t parent_ino, const char *name);
-struct rafs_file* rafs_file_create(struct super_block *sb, ino_t parent_ino, const char *name, umode_t mode);
-struct rafs_file* rafs_file_link(struct super_block *sb, ino_t parent_ino, const char *name, struct rafs_file *target_file);
-void rafs_file_delete(struct super_block *sb, ino_t parent_ino, const char *name);
-int rafs_file_is_empty_dir(struct super_block *sb, ino_t dir_ino);
-void rafs_file_cleanup(struct super_block *sb);
-size_t rafs_file_get_size(struct rafs_file *file);
 ssize_t rafs_read(struct file *filp, char *buffer, size_t len, loff_t *offset);
 ssize_t rafs_write(struct file *filp, const char *buffer, size_t len, loff_t *offset);
 

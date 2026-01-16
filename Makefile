@@ -1,12 +1,21 @@
 obj-m += rafs.o
-rafs-objs := source/rafs.o source/inode.o source/super.o source/dir.o source/file.o
 
-PWD := $(CURDIR) 
-KDIR = /lib/modules/`uname -r`/build
-EXTRA_CFLAGS = -Wall -g
+rafs-objs := \
+	source/rafs.o \
+	source/super.o \
+	source/inode.o \
+	source/dir.o \
+	source/file.o \
+	source/api/select.o \
+	source/api/ram/ram_backend.o
+
+PWD := $(CURDIR)
+KDIR := /lib/modules/$(shell uname -r)/build
+
+EXTRA_CFLAGS = -Wall -g -DRAFS_BACKEND_RAM
 
 all:
-	make -C $(KDIR) M=$(PWD) modules 
+	make -C $(KDIR) M=$(PWD) modules
 
 clean:
 	make -C $(KDIR) M=$(PWD) clean

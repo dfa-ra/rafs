@@ -1,39 +1,42 @@
 #include "rafs.h"
+#include "api/api.h"
 
 extern struct inode* rafs_get_inode(struct super_block* sb, const struct inode* dir, umode_t mode, int i_ino);
 extern struct inode_operations rafs_inode_ops;
 extern struct file_operations rafs_dir_ops;
-extern void rafs_file_cleanup(struct super_block *sb);
 
 
 int rafs_fill_super(struct super_block *sb, void *data, int silent) {
-    struct rafs_sb_info *sbi;
     struct inode* inode;
+    struct rafs_file_info *file_info;
+    int ret;
 
-    sbi = kmalloc(sizeof(struct rafs_sb_info), GFP_KERNEL);
-    if (sbi == NULL) {
+    ret = rafs_backend_ops.init(sb);
+    if (ret != 0) {
+        return ret;
+    }
+
+    file_info = rafs_backend_ops.create(sb, 0, "", S_IFDIR | S_IRWXUGO);
+    if (file_info == NULL) {
+        rafs_backend_ops.destroy(sb);
         return -ENOMEM;
     }
 
-    INIT_LIST_HEAD(&sbi->file_list);
-    init_rwsem(&sbi->rwsem);
-    sbi->next_ino = 1001;
-    
-    sb->s_fs_info = sbi;
-
-    inode = rafs_get_inode(sb, NULL, S_IFDIR | S_IRWXUGO, 1000);
+    inode = rafs_get_inode(sb, NULL, file_info->mode, file_info->ino);
     if (inode == NULL) {
-        kfree(sbi);
+        rafs_backend_ops.free_file_info(file_info);
+        rafs_backend_ops.destroy(sb);
         return -ENOMEM;
     }
 
     inode->i_op = &rafs_inode_ops;
     inode->i_fop = &rafs_dir_ops;
+    inode->i_private = file_info;
 
     sb->s_root = d_make_root(inode);
     if (sb->s_root == NULL) {
         iput(inode);
-        kfree(sbi);
+        rafs_backend_ops.destroy(sb);
         return -ENOMEM;
     }
 
@@ -59,7 +62,7 @@ struct dentry* rafs_mount(
 
 
 void rafs_kill_sb(struct super_block* sb) {
-    rafs_file_cleanup(sb);
+    rafs_backend_ops.destroy(sb);
     printk(KERN_INFO "[rafs] rafs super block is destroyed. Unmount successfully.\n");
 }
 
