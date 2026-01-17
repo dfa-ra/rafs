@@ -199,13 +199,49 @@ int net_backend_unlink(struct super_block *sb, ino_t parent_ino, const char *nam
 }
 
 // Создание hard link
-// NOTE: Эта функция требует доработки API сервера для передачи old_ino вместо old_parent/old_name
 struct rafs_file_info* net_backend_link(struct super_block *sb, ino_t parent_ino, const char *name, struct rafs_file_info *target) {
-    // Пока не реализовано - требует знания имени исходного файла
-    // Возможные решения:
-    // 1. Изменить API сервера на link(old_ino, new_parent, new_name)
-    // 2. Добавить поле name в rafs_file_info
-    return NULL;
+    char *encoded_name;
+    int64_t result;
+
+    NET_LOG("link: parent_ino=%lu, name='%s', target_ino=%lu\n", parent_ino, name ? name : "NULL", target ? target->ino : 0);
+
+    if (name == NULL || target == NULL) {
+        return NULL;
+    }
+
+    encoded_name = encode_string(name);
+    if (encoded_name == NULL) {
+        NET_LOG("link: failed to encode name\n");
+        return NULL;
+    }
+
+    char parent_str[32], name_param[256+10], target_str[32];
+    char *params[3];
+
+    snprintf(parent_str, sizeof(parent_str), "parent_id=%lu", parent_ino);
+    snprintf(name_param, sizeof(name_param), "name=%s", encoded_name);
+    snprintf(target_str, sizeof(target_str), "target_id=%lu", target->ino);
+
+    params[0] = parent_str;
+    params[1] = name_param;
+    params[2] = target_str;
+
+    NET_LOG("link: params[0]='%s', params[1]='%s', params[2]='%s'\n", params[0], params[1], params[2]);
+
+    result = rafs_http_call(TOKEN, "link", NULL, 0, 3,
+                           params[0], params[1], params[2]);
+
+    kfree(encoded_name);
+
+    if (result < 0) {
+        NET_LOG("link: http_call failed with %lld\n", result);
+        return NULL;
+    }
+
+    NET_LOG("link: success\n");
+    // Возвращаем копию target file_info с увеличенным ref_count
+    target->ref_count++;
+    return target;
 }
 
 // Проверка, является ли директория пустой
@@ -263,16 +299,53 @@ ssize_t net_backend_read(struct rafs_file_info *file, char *buffer, size_t len, 
 }
 
 // Запись данных в файл
-// NOTE: Текущая реализация HTTP GET не поддерживает передачу бинарных данных
-// Нужно изменить API на POST или найти другой способ передачи data
 ssize_t net_backend_write(struct rafs_file_info *file, const char *buffer, size_t len, loff_t offset) {
+    char *encoded_data;
+    int64_t result;
+
+    NET_LOG("write: ino=%lu, len=%zu, offset=%llu\n", file->ino, len, offset);
+
     if (file == NULL || buffer == NULL) {
         return -EINVAL;
     }
 
-    // Пока не реализовано - HTTP GET не может передавать бинарные данные
-    // Нужно изменить http.c для поддержки POST или кодирования data
-    return -ENOTSUPP;
+    // Выделяем память для URL-encoded данных (каждый байт может стать до 3 байт)
+    encoded_data = kmalloc(len * 3 + 1, GFP_KERNEL);
+    if (encoded_data == NULL) {
+        return -ENOMEM;
+    }
+
+    // URL-encode данные
+    encode(buffer, encoded_data);
+
+    NET_LOG("write: encoded_data length=%zu\n", strlen(encoded_data));
+
+    char id_str[32], offset_str[32], buf_param[256+10];
+    char *params[3];
+
+    snprintf(id_str, sizeof(id_str), "id=%lu", file->ino);
+    snprintf(offset_str, sizeof(offset_str), "offset=%llu", offset);
+    // Используем buf=... для передачи encoded данных
+    snprintf(buf_param, sizeof(buf_param), "buf=%s", encoded_data);
+
+    params[0] = id_str;
+    params[1] = offset_str;
+    params[2] = buf_param;
+
+    NET_LOG("write: params[0]='%s', params[1]='%s', params[2]='%s'\n", params[0], params[1], params[2]);
+
+    result = rafs_http_call(TOKEN, "write", NULL, 0, 3,
+                           params[0], params[1], params[2]);
+
+    kfree(encoded_data);
+
+    if (result < 0) {
+        NET_LOG("write: http_call failed with %lld\n", result);
+        return result;
+    }
+
+    NET_LOG("write: success, bytes_written=%zu\n", len);
+    return len;  // result содержит количество записанных байт
 }
 
 // Чтение содержимого директории

@@ -48,6 +48,16 @@ def handle_lookup(db: Session, token: str, parent_id: int, name: str) -> tuple[i
 
 
 def handle_create(db: Session, token: str, parent_id: int, name: str, mode: int) -> tuple[int, bytes]:
+    # Check if file/directory already exists
+    existing = db.execute(
+        select(Dirent.inode_id).where(
+            Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        return -1, b""  # File exists
+
     # MAX(id)+1 в рамках token (как в исходнике)
     max_id = db.execute(
         select(func.max(Inode.id)).where(Inode.token == token)
