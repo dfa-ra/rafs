@@ -9,9 +9,10 @@ extern struct file_operations rafs_dir_ops;
 int rafs_fill_super(struct super_block *sb, void *data, int silent) {
     struct inode* inode;
     struct rafs_file_info *file_info;
+    const char *token = (const char *)data;
     int ret;
 
-    ret = rafs_backend_ops.init(sb);
+    ret = rafs_backend_ops.init(sb, token);
     if (ret != 0) {
         return ret;
     }
@@ -51,7 +52,7 @@ struct dentry* rafs_mount(
     const char* token,
     void* data
 ) {
-    struct dentry* ret = mount_nodev(fs_type, flags, data, rafs_fill_super);
+    struct dentry* ret = mount_nodev(fs_type, flags, (void*)token, rafs_fill_super);
     if (ret == NULL) {
         printk(KERN_ERR "[rafs] Can't mount file system\n");
     } else {

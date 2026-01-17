@@ -48,28 +48,38 @@ def handle_lookup(db: Session, token: str, parent_id: int, name: str) -> tuple[i
 
 
 def handle_create(db: Session, token: str, parent_id: int, name: str, mode: int) -> tuple[int, bytes]:
-    # Check if file/directory already exists
-    existing = db.execute(
-        select(Dirent.inode_id).where(
-            Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name
-        )
-    ).scalar_one_or_none()
+    lookup_result, _ = handle_lookup(db, token, parent_id, name)
+    print(f"CREATE: lookup_result={lookup_result} for {parent_id}/{name}")
+    if lookup_result == 0:
+        print(f"CREATE: file {parent_id}/{name} exists, returning -1")
+        return -1, b""
 
-    if existing is not None:
-        return -1, b""  # File exists
 
-    # MAX(id)+1 в рамках token (как в исходнике)
     max_id = db.execute(
         select(func.max(Inode.id)).where(Inode.token == token)
     ).scalar_one()
 
     new_id = (max_id if max_id is not None else ROOT_INO) + 1
 
-    inode = Inode(token=token, id=new_id, mode=mode, nlink=1, size=0, content=None)
-    db.add(inode)
-    db.add(Dirent(token=token, parent_id=parent_id, name=name, inode_id=new_id))
+    nlink = 2 if mode & S_IFDIR else 1
 
-    return 0, pack_stat(new_id, mode, 0)
+    try:
+        inode = Inode(token=token, id=new_id, mode=mode, nlink=nlink, size=0, content=None)
+        db.add(inode)
+        db.add(Dirent(token=token, parent_id=parent_id, name=name, inode_id=new_id))
+
+        if mode & S_IFDIR:
+            db.execute(
+                update(Inode)
+                .where(Inode.token == token, Inode.id == parent_id)
+                .values(nlink=Inode.nlink + 1)
+            )
+
+        print(f"CREATE: successfully created {parent_id}/{name} with inode {new_id}")
+        return 0, pack_stat(new_id, mode, 0)
+    except Exception as e:
+        print(f"CREATE: error creating {parent_id}/{name}: {e}")
+        raise
 
 
 def handle_link(db: Session, token: str, parent_id: int, name: str, target_id: int) -> tuple[int, bytes]:
@@ -83,7 +93,6 @@ def handle_link(db: Session, token: str, parent_id: int, name: str, target_id: i
     if target_mode & S_IFDIR:
         return -1, b""
 
-    # Добавляем запись в dirents и увеличиваем nlink
     db.add(Dirent(token=token, parent_id=parent_id, name=name, inode_id=target_id))
     db.execute(
         update(Inode)
@@ -94,14 +103,15 @@ def handle_link(db: Session, token: str, parent_id: int, name: str, target_id: i
 
 
 def handle_unlink(db: Session, token: str, parent_id: int, name: str) -> tuple[int, bytes]:
-    # Исходник удаляет dirent, но не уменьшает nlink (оставим совместимо)
-    d = db.execute(
+    inode_id = db.execute(
         select(Dirent.inode_id).where(
             Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name
         )
     ).scalar_one_or_none()
 
-    if d is None:
+    print(f"UNLINK: inode_id={inode_id} for {parent_id}/{name}")
+    if inode_id is None:
+        print(f"UNLINK: file {parent_id}/{name} not found")
         return -1, b""
 
     db.execute(
@@ -109,15 +119,62 @@ def handle_unlink(db: Session, token: str, parent_id: int, name: str) -> tuple[i
             Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name
         )
     )
+
+    result = db.execute(
+        update(Inode)
+        .where(Inode.token == token, Inode.id == inode_id)
+        .values(nlink=Inode.nlink - 1)
+        .returning(Inode.nlink)
+    )
+    new_nlink = result.scalar_one()
+
+    if new_nlink == 0:
+        print(f"UNLINK: deleting inode {inode_id}")
+        db.execute(
+            delete(Inode).where(Inode.token == token, Inode.id == inode_id)
+        )
+    else:
+        print(f"UNLINK: keeping inode {inode_id}, nlink={new_nlink}")
+
+    print(f"UNLINK: completed for {parent_id}/{name}")
     return 0, b""
 
 
 def handle_rmdir(db: Session, token: str, parent_id: int, name: str) -> tuple[int, bytes]:
+    inode_id = db.execute(
+        select(Dirent.inode_id).where(
+            Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name
+        )
+    ).scalar_one_or_none()
+
+    if inode_id is None:
+        return -1, b""
+
     db.execute(
         delete(Dirent).where(
             Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name
         )
     )
+
+    db.execute(
+        update(Inode)
+        .where(Inode.token == token, Inode.id == parent_id)
+        .values(nlink=Inode.nlink - 1)
+    )
+
+    result = db.execute(
+        update(Inode)
+        .where(Inode.token == token, Inode.id == inode_id)
+        .values(nlink=Inode.nlink - 1)
+        .returning(Inode.nlink)
+    )
+    new_nlink = result.scalar_one()
+
+    if new_nlink == 0:
+        db.execute(
+            delete(Inode).where(Inode.token == token, Inode.id == inode_id)
+        )
+
     return 0, b""
 
 
@@ -147,7 +204,6 @@ def handle_read(db: Session, token: str, inode_id: int, offset: int, size: int) 
 
 
 def handle_write(db: Session, token: str, inode_id: int, offset: int, buf_param: str) -> tuple[int, bytes]:
-    # buf приходит как URL-encoded строка (как в исходнике)
     buf = urllib.parse.unquote_to_bytes(buf_param)
 
     content = db.execute(
@@ -195,12 +251,10 @@ def handle_iterate(db: Session, token: str, inode_id: int, offset: int) -> tuple
 
 
 def handle_is_empty_dir(db: Session, token: str, inode_id: int) -> tuple[int, bytes]:
-    # Проверяем, есть ли файлы в директории (кроме . и ..)
     count = db.execute(
         select(func.count())
         .select_from(Dirent)
         .where(Dirent.token == token, Dirent.parent_id == inode_id)
     ).scalar()
 
-    # Если count == 0, директория пустая
     return 0 if count == 0 else 1, b""

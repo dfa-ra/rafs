@@ -7,7 +7,6 @@ from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
 DB_FILE = "rafs.db"
 DATABASE_URL = f"sqlite:///{DB_FILE}"
 
-# Для SQLite + многопоточности (uvicorn/workers) обычно нужно check_same_thread=False
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False},

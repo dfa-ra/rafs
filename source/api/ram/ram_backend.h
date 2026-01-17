@@ -7,25 +7,33 @@
 #include <linux/rwsem.h>
 #include "../../rafs.h"
 
-struct ram_file {
-    struct list_head list;       // Связный список
-    char name[256];              // Имя файла
-    ino_t ino;                   // Номер inode
-    ino_t parent_ino;            // Номер inode родительской директории
-    umode_t mode;                // Тип и права доступа
-    char *data;                  // Данные файла (содержимое)
-    size_t size;                 // Размер данных файла
-    size_t capacity;             // Емкость буфера данных
+struct ram_inode {
+    struct list_head list;        // связный список всех inode
+    ino_t ino;                    // номер inode
+    umode_t mode;                 // тип и права доступа
+    char *data;                   // данные файла (содержимое)
+    size_t size;                  // размер данных файла
+    size_t capacity;              // емкость буфера данных
+    unsigned int nlink;           // количество hardlink на этот inode
+};
+
+struct ram_dentry {
+    struct list_head list;        // связный список всех dentries
+    ino_t parent_ino;             // номер inode родительской директории
+    char name[256];               // имя файла
+    struct ram_inode *inode;      // указатель на inode
 };
 
 struct ram_sb_info {
-    struct list_head file_list;  // Список файлов
-    struct rw_semaphore rwsem;   // Семафор для синхронизации
-    ino_t next_ino;              // Следующий свободный номер ноды
+    struct list_head inode_list;  // список inode
+    struct list_head dentry_list; // список dentries
+    struct rw_semaphore rwsem;    // семафор для синхронизации
+    ino_t next_ino;               // следующий свободный номер inode
+    char *token;                  // токен для аутентификации (для совместимости, RAM backend игнорирует)
 };
 
 
-int ram_backend_init(struct super_block *sb);
+int ram_backend_init(struct super_block *sb, const char *token);
 void ram_backend_destroy(struct super_block *sb);
 struct rafs_file_info* ram_backend_lookup(struct super_block *sb, ino_t parent_ino, const char *name);
 struct rafs_file_info* ram_backend_create(struct super_block *sb, ino_t parent_ino, const char *name, umode_t mode);

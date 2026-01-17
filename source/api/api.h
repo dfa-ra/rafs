@@ -4,17 +4,18 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 
-// Публичная структура информации о файле для VFS-слоя
+// информации о файле для VFS-слоя
 struct rafs_file_info {
     int ref_count;          // счетчик ссылок на эту структуру
     ino_t ino;              // inode номер
     umode_t mode;           // тип файла и права
     size_t size;            // размер файла
+    struct super_block *sb; // указатель на super_block для получения токена
     void *private_data;     // указатель на внутренние данные backend
 };
 
 struct rafs_backend_ops {
-    int (*init)(struct super_block *sb);
+    int (*init)(struct super_block *sb, const char *token);
     void (*destroy)(struct super_block *sb);
 
     struct rafs_file_info* (*lookup)(struct super_block *sb, ino_t parent_ino, const char *name);

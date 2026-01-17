@@ -5,9 +5,11 @@
 #include <linux/types.h>
 #include "../../rafs.h"
 
-// Для NET backend структуры данных не нужны - все хранится на сервере
+struct net_sb_info {
+    char *token;
+};
 
-int net_backend_init(struct super_block *sb);
+int net_backend_init(struct super_block *sb, const char *token);
 void net_backend_destroy(struct super_block *sb);
 struct rafs_file_info* net_backend_lookup(struct super_block *sb, ino_t parent_ino, const char *name);
 struct rafs_file_info* net_backend_create(struct super_block *sb, ino_t parent_ino, const char *name, umode_t mode);

@@ -15,10 +15,6 @@
 
 #define LOG(fmt, ...) pr_info("[" MODULE_NAME "]: " fmt, ##__VA_ARGS__)
 
-// Выбор backend при компиляции определяется в Makefile или командной строке
-// #define RAFS_BACKEND_RAM  // RAM backend (in-memory)
-// #define RAFS_BACKEND_NET  // NET backend (будет добавлен позже)
-
 
 // функции для работы с файлами в file.c
 ssize_t rafs_read(struct file *filp, char *buffer, size_t len, loff_t *offset);

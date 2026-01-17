@@ -202,14 +202,11 @@ int rafs_link(struct dentry *old_dentry, struct inode *parent_dir, struct dentry
 
     new_inode->i_op = &rafs_inode_ops;
     new_inode->i_fop = &rafs_file_ops;
-    new_inode->i_private = old_file_info;
-    old_file_info->ref_count++;
+    new_inode->i_private = new_file_info;
 
-    new_inode->i_size = rafs_backend_ops.get_size(old_file_info);
+    new_inode->i_size = rafs_backend_ops.get_size(new_file_info);
 
     d_add(new_dentry, new_inode);
-
-    rafs_backend_ops.free_file_info(new_file_info);
 
     return 0;
 }

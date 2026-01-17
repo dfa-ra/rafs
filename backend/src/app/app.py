@@ -33,7 +33,7 @@ def api_dispatch(
         name: Optional[str] = Query(default=None),
         mode: Optional[int] = Query(default=None),
         target_id: Optional[int] = Query(default=None),
-        id: Optional[int] = Query(default=None),         # inode id
+        id: Optional[int] = Query(default=None),
         offset: Optional[int] = Query(default=None),
         size: Optional[int] = Query(default=None),
         buf: Optional[str] = Query(default=None),
@@ -98,7 +98,6 @@ def api_dispatch(
             return pack_response(ret, body)
 
     except Exception:
-        # Поведение как в исходнике: на исключение возвращаем -1 и пустое тело
         return pack_response(-1, b"")
 
 

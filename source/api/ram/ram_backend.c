@@ -10,7 +10,7 @@ struct ram_sb_info* ram_sb_info(struct super_block *sb) {
     return (struct ram_sb_info*)sb->s_fs_info;
 }
 
-struct rafs_file_info* ram_create_file_info(struct ram_file *ram_file) {
+struct rafs_file_info* ram_create_file_info(struct super_block *sb, struct ram_inode *ram_inode) {
     struct rafs_file_info *info;
 
     info = kmalloc(sizeof(struct rafs_file_info), GFP_KERNEL);
@@ -19,16 +19,16 @@ struct rafs_file_info* ram_create_file_info(struct ram_file *ram_file) {
     }
 
     info->ref_count = 1;
-    info->ino = ram_file->ino;
-    info->mode = ram_file->mode;
-    info->size = ram_file->size;
-    info->private_data = ram_file;
+    info->ino = ram_inode->ino;
+    info->mode = ram_inode->mode;
+    info->size = ram_inode->size;
+    info->sb = sb;
+    info->private_data = ram_inode;
 
     return info;
 }
 
-// Инициализация RAM backend
-int ram_backend_init(struct super_block *sb) {
+int ram_backend_init(struct super_block *sb, const char *token) {
     struct ram_sb_info *sbi;
 
     sbi = kmalloc(sizeof(struct ram_sb_info), GFP_KERNEL);
@@ -36,33 +36,45 @@ int ram_backend_init(struct super_block *sb) {
         return -ENOMEM;
     }
 
-    INIT_LIST_HEAD(&sbi->file_list);
+    INIT_LIST_HEAD(&sbi->inode_list);
+    INIT_LIST_HEAD(&sbi->dentry_list);
     init_rwsem(&sbi->rwsem);
     sbi->next_ino = 1001;
+    sbi->token = NULL;
 
     sb->s_fs_info = sbi;
     return 0;
 }
 
-// Уничтожение RAM backend
 void ram_backend_destroy(struct super_block *sb) {
     struct ram_sb_info *sbi = ram_sb_info(sb);
-    struct ram_file *file, *tmp;
+    struct ram_inode *inode, *inode_tmp;
+    struct ram_dentry *dentry, *dentry_tmp;
 
     if (sbi == NULL) {
         return;
     }
 
     down_write(&sbi->rwsem);
-    list_for_each_entry_safe(file, tmp, &sbi->file_list, list) {
-        list_del(&file->list);
-        if (file->data != NULL) {
-            kfree(file->data);
+
+    list_for_each_entry_safe(inode, inode_tmp, &sbi->inode_list, list) {
+        list_del(&inode->list);
+        if (inode->data != NULL) {
+            kfree(inode->data);
         }
-        kfree(file);
+        kfree(inode);
     }
+
+    list_for_each_entry_safe(dentry, dentry_tmp, &sbi->dentry_list, list) {
+        list_del(&dentry->list);
+        kfree(dentry);
+    }
+
     up_write(&sbi->rwsem);
 
+    if (sbi->token != NULL) {
+        kfree(sbi->token);
+    }
     kfree(sbi);
     sb->s_fs_info = NULL;
 }
@@ -78,17 +90,17 @@ void ram_backend_free_file_info(struct rafs_file_info *file_info) {
 
 struct rafs_file_info* ram_backend_lookup(struct super_block *sb, ino_t parent_ino, const char *name) {
     struct ram_sb_info *sbi = ram_sb_info(sb);
-    struct ram_file *file;
+    struct ram_dentry *dentry;
 
     if (sbi == NULL || name == NULL) {
         return NULL;
     }
 
     down_read(&sbi->rwsem);
-    list_for_each_entry(file, &sbi->file_list, list) {
-        if (file->parent_ino == parent_ino && strcmp(file->name, name) == 0) {
+    list_for_each_entry(dentry, &sbi->dentry_list, list) {
+        if (dentry->parent_ino == parent_ino && strcmp(dentry->name, name) == 0) {
             up_read(&sbi->rwsem);
-            return ram_create_file_info(file);
+            return ram_create_file_info(sb, dentry->inode);
         }
     }
     up_read(&sbi->rwsem);
@@ -97,31 +109,42 @@ struct rafs_file_info* ram_backend_lookup(struct super_block *sb, ino_t parent_i
 
 struct rafs_file_info* ram_backend_create(struct super_block *sb, ino_t parent_ino, const char *name, umode_t mode) {
     struct ram_sb_info *sbi = ram_sb_info(sb);
-    struct ram_file *file;
+    struct ram_inode *inode;
+    struct ram_dentry *dentry;
 
     if (sbi == NULL) {
         return NULL;
     }
 
     if (parent_ino == 0 && (name == NULL || *name == '\0')) {
-        file = kmalloc(sizeof(struct ram_file), GFP_KERNEL);
-        if (file == NULL) {
+        inode = kmalloc(sizeof(struct ram_inode), GFP_KERNEL);
+        if (inode == NULL) {
             return NULL;
         }
 
-        file->name[0] = '\0';
-        file->parent_ino = 0;
-        file->mode = mode;
-        file->ino = 1000;
-        file->data = NULL;
-        file->size = 0;
-        file->capacity = 0;
+        inode->ino = 1000;
+        inode->mode = mode;
+        inode->data = NULL;
+        inode->size = 0;
+        inode->capacity = 0;
+        inode->nlink = 1;
+
+        dentry = kmalloc(sizeof(struct ram_dentry), GFP_KERNEL);
+        if (dentry == NULL) {
+            kfree(inode);
+            return NULL;
+        }
+
+        dentry->parent_ino = 0;
+        dentry->name[0] = '\0';
+        dentry->inode = inode;
 
         down_write(&sbi->rwsem);
-        list_add_tail(&file->list, &sbi->file_list);
+        list_add_tail(&inode->list, &sbi->inode_list);
+        list_add_tail(&dentry->list, &sbi->dentry_list);
         up_write(&sbi->rwsem);
 
-        return ram_create_file_info(file);
+        return ram_create_file_info(sb, inode);
     }
 
     if (name == NULL) {
@@ -132,40 +155,53 @@ struct rafs_file_info* ram_backend_create(struct super_block *sb, ino_t parent_i
         return NULL;
     }
 
-    file = kmalloc(sizeof(struct ram_file), GFP_KERNEL);
-    if (file == NULL) {
+    inode = kmalloc(sizeof(struct ram_inode), GFP_KERNEL);
+    if (inode == NULL) {
         return NULL;
     }
 
-    strncpy(file->name, name, sizeof(file->name) - 1);
-    file->name[sizeof(file->name) - 1] = '\0';
-    file->parent_ino = parent_ino;
-    file->mode = mode;
-    file->ino = sbi->next_ino++;
-    file->data = NULL;
-    file->size = 0;
-    file->capacity = 0;
+    inode->ino = sbi->next_ino++;
+    inode->mode = mode;
+    inode->data = NULL;
+    inode->size = 0;
+    inode->capacity = 0;
+    inode->nlink = 1;
 
     if (!S_ISDIR(mode)) {
-        file->data = kmalloc(INITIAL_CAPACITY, GFP_KERNEL);
-        if (file->data == NULL) {
-            kfree(file);
+        inode->data = kmalloc(INITIAL_CAPACITY, GFP_KERNEL);
+        if (inode->data == NULL) {
+            kfree(inode);
             return NULL;
         }
-        file->capacity = INITIAL_CAPACITY;
+        inode->capacity = INITIAL_CAPACITY;
     }
 
+    dentry = kmalloc(sizeof(struct ram_dentry), GFP_KERNEL);
+    if (dentry == NULL) {
+        if (inode->data != NULL) {
+            kfree(inode->data);
+        }
+        kfree(inode);
+        return NULL;
+    }
+
+    strncpy(dentry->name, name, sizeof(dentry->name) - 1);
+    dentry->name[sizeof(dentry->name) - 1] = '\0';
+    dentry->parent_ino = parent_ino;
+    dentry->inode = inode;
+
     down_write(&sbi->rwsem);
-    list_add_tail(&file->list, &sbi->file_list);
+    list_add_tail(&inode->list, &sbi->inode_list);
+    list_add_tail(&dentry->list, &sbi->dentry_list);
     up_write(&sbi->rwsem);
 
-    return ram_create_file_info(file);
+    return ram_create_file_info(sb, inode);
 }
 
 int ram_backend_unlink(struct super_block *sb, ino_t parent_ino, const char *name) {
     struct ram_sb_info *sbi = ram_sb_info(sb);
-    struct ram_file *file_to_delete = NULL, *file, *tmp;
-    int link_count = 0;
+    struct ram_dentry *dentry_to_delete = NULL;
+    struct ram_inode *inode;
 
     if (sbi == NULL || name == NULL) {
         return -EINVAL;
@@ -173,37 +209,30 @@ int ram_backend_unlink(struct super_block *sb, ino_t parent_ino, const char *nam
 
     down_write(&sbi->rwsem);
 
-    list_for_each_entry(file, &sbi->file_list, list) {
-        if (file->parent_ino == parent_ino && strcmp(file->name, name) == 0) {
-            file_to_delete = file;
+    list_for_each_entry(dentry_to_delete, &sbi->dentry_list, list) {
+        if (dentry_to_delete->parent_ino == parent_ino && strcmp(dentry_to_delete->name, name) == 0) {
             break;
         }
     }
 
-    if (file_to_delete == NULL) {
+    if (dentry_to_delete == NULL) {
         up_write(&sbi->rwsem);
         return -ENOENT;
     }
 
-    list_for_each_entry(file, &sbi->file_list, list) {
-        if (file->ino == file_to_delete->ino) {
-            link_count++;
-        }
-    }
+    inode = dentry_to_delete->inode;
 
-    if (link_count == 1) {
-        list_for_each_entry_safe(file, tmp, &sbi->file_list, list) {
-            if (file->ino == file_to_delete->ino) {
-                list_del(&file->list);
-                if (file->data != NULL) {
-                    kfree(file->data);
-                }
-                kfree(file);
-            }
+    list_del(&dentry_to_delete->list);
+    kfree(dentry_to_delete);
+
+    inode->nlink--;
+
+    if (inode->nlink == 0) {
+        list_del(&inode->list);
+        if (inode->data != NULL) {
+            kfree(inode->data);
         }
-    } else {
-        list_del(&file_to_delete->list);
-        kfree(file_to_delete);
+        kfree(inode);
     }
 
     up_write(&sbi->rwsem);
@@ -212,7 +241,8 @@ int ram_backend_unlink(struct super_block *sb, ino_t parent_ino, const char *nam
 
 struct rafs_file_info* ram_backend_link(struct super_block *sb, ino_t parent_ino, const char *name, struct rafs_file_info *target) {
     struct ram_sb_info *sbi = ram_sb_info(sb);
-    struct ram_file *file;
+    struct ram_inode *target_inode;
+    struct ram_dentry *dentry;
 
     if (sbi == NULL || target == NULL || name == NULL) {
         return NULL;
@@ -222,40 +252,40 @@ struct rafs_file_info* ram_backend_link(struct super_block *sb, ino_t parent_ino
         return NULL;
     }
 
-    file = kmalloc(sizeof(struct ram_file), GFP_KERNEL);
-    if (file == NULL) {
+    target_inode = (struct ram_inode *)target->private_data;
+    if (target_inode == NULL) {
         return NULL;
     }
 
-    struct ram_file *target_ram = (struct ram_file *)target->private_data;
+    dentry = kmalloc(sizeof(struct ram_dentry), GFP_KERNEL);
+    if (dentry == NULL) {
+        return NULL;
+    }
 
-    strncpy(file->name, name, sizeof(file->name) - 1);
-    file->name[sizeof(file->name) - 1] = '\0';
-    file->parent_ino = parent_ino;
-    file->mode = target->mode;
-    file->ino = target->ino;
-    file->data = target_ram->data;
-    file->size = target_ram->size;
-    file->capacity = target_ram->capacity;
+    strncpy(dentry->name, name, sizeof(dentry->name) - 1);
+    dentry->name[sizeof(dentry->name) - 1] = '\0';
+    dentry->parent_ino = parent_ino;
+    dentry->inode = target_inode;
 
     down_write(&sbi->rwsem);
-    list_add_tail(&file->list, &sbi->file_list);
+    target_inode->nlink++;
+    list_add_tail(&dentry->list, &sbi->dentry_list);
     up_write(&sbi->rwsem);
 
-    return ram_create_file_info(file);
+    return ram_create_file_info(sb, target_inode);
 }
 
 int ram_backend_is_empty_dir(struct super_block *sb, ino_t dir_ino) {
     struct ram_sb_info *sbi = ram_sb_info(sb);
-    struct ram_file *file;
+    struct ram_dentry *dentry;
 
     if (sbi == NULL) {
         return 0;
     }
 
     down_read(&sbi->rwsem);
-    list_for_each_entry(file, &sbi->file_list, list) {
-        if (file->parent_ino == dir_ino) {
+    list_for_each_entry(dentry, &sbi->dentry_list, list) {
+        if (dentry->parent_ino == dir_ino) {
             up_read(&sbi->rwsem);
             return 0;
         }
@@ -265,31 +295,31 @@ int ram_backend_is_empty_dir(struct super_block *sb, ino_t dir_ino) {
 }
 
 ssize_t ram_backend_read(struct rafs_file_info *file_info, char *buffer, size_t len, loff_t offset) {
-    struct ram_file *file;
+    struct ram_inode *inode;
 
     if (file_info == NULL || buffer == NULL) {
         return -EINVAL;
     }
 
-    file = (struct ram_file *)file_info->private_data;
-    if (file == NULL || S_ISDIR(file->mode)) {
+    inode = (struct ram_inode *)file_info->private_data;
+    if (inode == NULL || S_ISDIR(inode->mode)) {
         return -EINVAL;
     }
 
-    if (offset >= file->size) {
+    if (offset >= inode->size) {
         return 0;
     }
 
-    if (len > file->size - offset) {
-        len = file->size - offset;
+    if (len > inode->size - offset) {
+        len = inode->size - offset;
     }
 
-    memcpy(buffer, file->data + offset, len);
+    memcpy(buffer, inode->data + offset, len);
     return len;
 }
 
 ssize_t ram_backend_write(struct rafs_file_info *file_info, const char *buffer, size_t len, loff_t offset) {
-    struct ram_file *file;
+    struct ram_inode *inode;
     size_t new_size;
     char *new_data;
 
@@ -297,8 +327,8 @@ ssize_t ram_backend_write(struct rafs_file_info *file_info, const char *buffer, 
         return -EINVAL;
     }
 
-    file = (struct ram_file *)file_info->private_data;
-    if (file == NULL || S_ISDIR(file->mode)) {
+    inode = (struct ram_inode *)file_info->private_data;
+    if (inode == NULL || S_ISDIR(inode->mode)) {
         return -EINVAL;
     }
 
@@ -308,8 +338,8 @@ ssize_t ram_backend_write(struct rafs_file_info *file_info, const char *buffer, 
 
     new_size = offset + len;
 
-    if (new_size > file->capacity) {
-        size_t new_capacity = file->capacity > 0 ? file->capacity : INITIAL_CAPACITY;
+    if (new_size > inode->capacity) {
+        size_t new_capacity = inode->capacity > 0 ? inode->capacity : INITIAL_CAPACITY;
         while (new_capacity < new_size) {
             new_capacity *= 2;
         }
@@ -319,42 +349,42 @@ ssize_t ram_backend_write(struct rafs_file_info *file_info, const char *buffer, 
             return -ENOMEM;
         }
 
-        if (file->data != NULL && file->size > 0) {
-            memcpy(new_data, file->data, file->size);
+        if (inode->data != NULL && inode->size > 0) {
+            memcpy(new_data, inode->data, inode->size);
         }
 
-        if (file->data != NULL) {
-            kfree(file->data);
+        if (inode->data != NULL) {
+            kfree(inode->data);
         }
 
-        file->data = new_data;
-        file->capacity = new_capacity;
+        inode->data = new_data;
+        inode->capacity = new_capacity;
     }
 
-    memcpy(file->data + offset, buffer, len);
-    file->size = new_size;
+    memcpy(inode->data + offset, buffer, len);
+    inode->size = new_size;
 
     return len;
 }
 
 size_t ram_backend_get_size(struct rafs_file_info *file_info) {
-    struct ram_file *file;
+    struct ram_inode *inode;
 
     if (file_info == NULL) {
         return 0;
     }
 
-    file = (struct ram_file *)file_info->private_data;
-    if (file == NULL) {
+    inode = (struct ram_inode *)file_info->private_data;
+    if (inode == NULL) {
         return 0;
     }
 
-    return file->size;
+    return inode->size;
 }
 
 int ram_backend_readdir(struct super_block *sb, ino_t dir_ino, struct dir_context *ctx) {
     struct ram_sb_info *sbi = ram_sb_info(sb);
-    struct ram_file *file;
+    struct ram_dentry *dentry;
     unsigned long offset = ctx->pos;
     int stored = 0;
     unsigned long file_index = 0;
@@ -364,7 +394,6 @@ int ram_backend_readdir(struct super_block *sb, ino_t dir_ino, struct dir_contex
         return 0;
     }
 
-    // "." и ".."
     if (offset == 0) {
         if (!dir_emit(ctx, ".", 1, dir_ino, DT_DIR)) {
             return stored;
@@ -389,8 +418,8 @@ int ram_backend_readdir(struct super_block *sb, ino_t dir_ino, struct dir_contex
     }
 
     down_read(&sbi->rwsem);
-    list_for_each_entry(file, &sbi->file_list, list) {
-        if (file->parent_ino != dir_ino) {
+    list_for_each_entry(dentry, &sbi->dentry_list, list) {
+        if (dentry->parent_ino != dir_ino) {
             continue;
         }
 
@@ -399,13 +428,13 @@ int ram_backend_readdir(struct super_block *sb, ino_t dir_ino, struct dir_contex
             continue;
         }
 
-        if (S_ISDIR(file->mode)) {
+        if (S_ISDIR(dentry->inode->mode)) {
             ftype = DT_DIR;
         } else {
             ftype = DT_REG;
         }
 
-        if (!dir_emit(ctx, file->name, strlen(file->name), file->ino, ftype)) {
+        if (!dir_emit(ctx, dentry->name, strlen(dentry->name), dentry->inode->ino, ftype)) {
             up_read(&sbi->rwsem);
             return stored;
         }
