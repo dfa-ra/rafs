@@ -176,8 +176,21 @@ def handle_iterate(db: Session, token: str, inode_id: int, offset: int) -> tuple
 
     if offset >= len(entries):
         return -1, b""
-
+    print(entries)
     child_id, name, mode = entries[offset]
+    print(child_id, name, mode)
     name_bytes = name.encode("utf-8")
     packed = struct.pack("<I256sI", child_id, name_bytes, mode)
     return 0, packed
+
+
+def handle_is_empty_dir(db: Session, token: str, inode_id: int) -> tuple[int, bytes]:
+    # Проверяем, есть ли файлы в директории (кроме . и ..)
+    count = db.execute(
+        select(func.count())
+        .select_from(Dirent)
+        .where(Dirent.token == token, Dirent.parent_id == inode_id)
+    ).scalar()
+
+    # Если count == 0, директория пустая
+    return 0 if count == 0 else 1, b""

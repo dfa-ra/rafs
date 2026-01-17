@@ -309,7 +309,7 @@ ssize_t ram_backend_write(struct rafs_file_info *file_info, const char *buffer, 
     new_size = offset + len;
 
     if (new_size > file->capacity) {
-        size_t new_capacity = file->capacity;
+        size_t new_capacity = file->capacity > 0 ? file->capacity : INITIAL_CAPACITY;
         while (new_capacity < new_size) {
             new_capacity *= 2;
         }

@@ -87,6 +87,11 @@ def api_dispatch(
                     return pack_response(-1, b"")
                 ret, body = fs.handle_iterate(db, token, int(id), int(offset))
 
+            elif cmd == "is_empty_dir":
+                if id is None:
+                    return pack_response(-1, b"")
+                ret, body = fs.handle_is_empty_dir(db, token, int(id))
+
             else:
                 return pack_response(-1, b"")
 

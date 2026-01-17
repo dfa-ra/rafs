@@ -7,12 +7,14 @@ rafs-objs := \
 	source/dir.o \
 	source/file.o \
 	source/api/select.o \
-	source/api/ram/ram_backend.o
+	source/api/ram/ram_backend.o \
+	source/api/net/net_backend.o \
+	source/api/net/http.o
 
 PWD := $(CURDIR)
 KDIR := /lib/modules/$(shell uname -r)/build
 
-EXTRA_CFLAGS = -Wall -g -DRAFS_BACKEND_RAM
+EXTRA_CFLAGS = -Wall -g -DRAFS_BACKEND_NET
 
 all:
 	make -C $(KDIR) M=$(PWD) modules
