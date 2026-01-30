@@ -21,8 +21,10 @@ struct rafs_backend_ops {
     struct rafs_file_info* (*lookup)(struct super_block *sb, ino_t parent_ino, const char *name);
     struct rafs_file_info* (*create)(struct super_block *sb, ino_t parent_ino, const char *name, umode_t mode);
     int (*unlink)(struct super_block *sb, ino_t parent_ino, const char *name);
+    int (*rmdir)(struct super_block *sb, ino_t parent_ino, const char *name);
     struct rafs_file_info* (*link)(struct super_block *sb, ino_t parent_ino, const char *name, struct rafs_file_info *target);
     int (*is_empty_dir)(struct super_block *sb, ino_t dir_ino);
+    int (*get_num_dir)(struct super_block *sb, ino_t dir_ino);
 
     ssize_t (*read)(struct rafs_file_info *file, char *buffer, size_t len, loff_t offset);
     ssize_t (*write)(struct rafs_file_info *file, const char *buffer, size_t len, loff_t offset);

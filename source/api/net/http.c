@@ -1,7 +1,7 @@
 #include "http.h"
 
 const char *SERVER_IP = "10.0.2.2";
-const int SERVER_PORT = 8080;
+const int SERVER_PORT = 8081;
 
 // callee should call free_request on received buffer
 int fill_request(struct kvec *vec, const char *token, const char *method,

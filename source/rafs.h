@@ -21,7 +21,7 @@ ssize_t rafs_read(struct file *filp, char *buffer, size_t len, loff_t *offset);
 ssize_t rafs_write(struct file *filp, const char *buffer, size_t len, loff_t *offset);
 
 // функции для работы с нодами из inode.c
-struct inode* rafs_get_inode(struct super_block* sb, const struct inode* dir, umode_t mode, int i_ino);
+struct inode* rafs_get_inode(struct super_block* sb, const struct inode* dir, umode_t mode, int i_ino, int ref_count);
 struct dentry* rafs_lookup(struct inode* parent_inode, struct dentry* child_dentry, unsigned int flag);
 int rafs_create(struct user_namespace *mnt_userns, struct inode *parent_inode, struct dentry *child_dentry, umode_t mode, bool b);
 int rafs_unlink(struct inode *parent_inode, struct dentry *child_dentry);

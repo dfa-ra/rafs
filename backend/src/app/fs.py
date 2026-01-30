@@ -9,6 +9,7 @@ from app.models import Inode, Dirent
 
 ROOT_INO = 1000
 S_IFDIR = 0o040000
+S_IFMT = 0o170000
 
 
 def pack_stat(inode_id: int, mode: int, size: int) -> bytes:
@@ -35,25 +36,23 @@ def ensure_root_exists(db: Session, token: str) -> None:
 
 def handle_lookup(db: Session, token: str, parent_id: int, name: str) -> tuple[int, bytes]:
     stmt = (
-        select(Inode.id, Inode.mode, Inode.size)
+        select(Inode.id, Inode.mode, Inode.size, Inode.nlink)
         .select_from(Dirent)
         .join(Inode, (Dirent.inode_id == Inode.id) & (Dirent.token == Inode.token))
         .where(Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name)
     )
     row = db.execute(stmt).first()
     if row:
-        inode_id, mode, size = row
-        return 0, pack_stat(inode_id, mode, size)
+        inode_id, mode, size, nlink = row
+        print(inode_id, mode, size, nlink)
+        return 0, struct.pack("<IIQI", inode_id, mode, size, nlink)
     return -1, b""
 
 
 def handle_create(db: Session, token: str, parent_id: int, name: str, mode: int) -> tuple[int, bytes]:
     lookup_result, _ = handle_lookup(db, token, parent_id, name)
-    print(f"CREATE: lookup_result={lookup_result} for {parent_id}/{name}")
     if lookup_result == 0:
-        print(f"CREATE: file {parent_id}/{name} exists, returning -1")
         return -1, b""
-
 
     max_id = db.execute(
         select(func.max(Inode.id)).where(Inode.token == token)
@@ -76,9 +75,9 @@ def handle_create(db: Session, token: str, parent_id: int, name: str, mode: int)
             )
 
         print(f"CREATE: successfully created {parent_id}/{name} with inode {new_id}")
-        return 0, pack_stat(new_id, mode, 0)
+        return 0, struct.pack("<IIQI", new_id, mode, 0, 1)
+
     except Exception as e:
-        print(f"CREATE: error creating {parent_id}/{name}: {e}")
         raise
 
 
@@ -109,9 +108,7 @@ def handle_unlink(db: Session, token: str, parent_id: int, name: str) -> tuple[i
         )
     ).scalar_one_or_none()
 
-    print(f"UNLINK: inode_id={inode_id} for {parent_id}/{name}")
     if inode_id is None:
-        print(f"UNLINK: file {parent_id}/{name} not found")
         return -1, b""
 
     db.execute(
@@ -129,14 +126,12 @@ def handle_unlink(db: Session, token: str, parent_id: int, name: str) -> tuple[i
     new_nlink = result.scalar_one()
 
     if new_nlink == 0:
-        print(f"UNLINK: deleting inode {inode_id}")
         db.execute(
             delete(Inode).where(Inode.token == token, Inode.id == inode_id)
         )
     else:
         print(f"UNLINK: keeping inode {inode_id}, nlink={new_nlink}")
 
-    print(f"UNLINK: completed for {parent_id}/{name}")
     return 0, b""
 
 
@@ -149,10 +144,15 @@ def handle_rmdir(db: Session, token: str, parent_id: int, name: str) -> tuple[in
 
     if inode_id is None:
         return -1, b""
-
     db.execute(
         delete(Dirent).where(
             Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name
+        )
+    )
+
+    db.execute(
+        delete(Inode).where(
+            Inode.token == token, Inode.id == inode_id
         )
     )
 
@@ -199,7 +199,7 @@ def handle_read(db: Session, token: str, inode_id: int, offset: int, size: int) 
     if offset >= len(data):
         return 0, b""
 
-    chunk = data[offset : offset + size]
+    chunk = data[offset: offset + size]
     return len(chunk), chunk
 
 
@@ -215,7 +215,7 @@ def handle_write(db: Session, token: str, inode_id: int, offset: int, buf_param:
     new_end = offset + len(buf)
     if new_end > len(data):
         data.extend(b"\0" * (new_end - len(data)))
-    data[offset : offset + len(buf)] = buf
+    data[offset: offset + len(buf)] = buf
 
     db.execute(
         update(Inode)
@@ -258,3 +258,20 @@ def handle_is_empty_dir(db: Session, token: str, inode_id: int) -> tuple[int, by
     ).scalar()
 
     return 0 if count == 0 else 1, b""
+
+
+def get_num_dir(db: Session, token: str, inode_id: int) -> tuple[int, bytes]:
+    stmt = (
+        select(func.count())
+        .select_from(Dirent)
+        .join(Inode, Dirent.inode_id == Inode.id)
+        .where(
+            Dirent.parent_id == inode_id,
+            Dirent.token == token,
+            (Inode.mode.op('&')(S_IFMT) == S_IFDIR),
+        )
+    )
+
+    count = db.execute(stmt).scalar_one()
+    packed = struct.pack("<I", count)
+    return 0, packed
