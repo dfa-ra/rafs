@@ -60,7 +60,7 @@ def handle_create(db: Session, token: str, parent_id: int, name: str, mode: int)
 
     new_id = (max_id if max_id is not None else ROOT_INO) + 1
 
-    nlink = 2 if mode & S_IFDIR else 1
+    nlink = 2 if mode & S_IFDIR == S_IFDIR else 1
 
     try:
         inode = Inode(token=token, id=new_id, mode=mode, nlink=nlink, size=0, content=None)
@@ -143,7 +143,28 @@ def handle_rmdir(db: Session, token: str, parent_id: int, name: str) -> tuple[in
     ).scalar_one_or_none()
 
     if inode_id is None:
+        return -1, b""  #
+
+    mode = db.execute(
+        select(Inode.mode).where(Inode.token == token, Inode.id == inode_id)
+    ).scalar_one_or_none()
+
+    if mode is None:
         return -1, b""
+
+    if (mode & S_IFMT) != S_IFDIR:
+        return -1, b""
+
+    # Проверим, что директория пустая
+    count = db.execute(
+        select(func.count()).select_from(Dirent).where(
+            Dirent.token == token, Dirent.parent_id == inode_id
+        )
+    ).scalar_one()
+
+    if count != 0:
+        return -1, b""
+
     db.execute(
         delete(Dirent).where(
             Dirent.token == token, Dirent.parent_id == parent_id, Dirent.name == name
@@ -162,20 +183,8 @@ def handle_rmdir(db: Session, token: str, parent_id: int, name: str) -> tuple[in
         .values(nlink=Inode.nlink - 1)
     )
 
-    result = db.execute(
-        update(Inode)
-        .where(Inode.token == token, Inode.id == inode_id)
-        .values(nlink=Inode.nlink - 1)
-        .returning(Inode.nlink)
-    )
-    new_nlink = result.scalar_one()
-
-    if new_nlink == 0:
-        db.execute(
-            delete(Inode).where(Inode.token == token, Inode.id == inode_id)
-        )
-
     return 0, b""
+
 
 
 def handle_getattr(db: Session, token: str, inode_id: int) -> tuple[int, bytes]:

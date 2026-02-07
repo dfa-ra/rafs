@@ -7,18 +7,18 @@
 
 
 
-ssize_t rafs_read(struct file *filp, char *buffer, size_t len, loff_t *offset) {
+ssize_t rafs_read(struct file *file, char *buffer, size_t len, loff_t *offset) {
     struct rafs_file_info *file_info;
     ssize_t bytes_read;
     char *kernel_buffer;
     size_t file_size;
     loff_t pos = *offset;
 
-    if (filp == NULL || filp->f_inode == NULL) {
+    if (file == NULL || file->f_inode == NULL) {
         return -EINVAL;
     }
 
-    file_info = (struct rafs_file_info *)filp->f_inode->i_private;
+    file_info = (struct rafs_file_info *)file->f_inode->i_private;
     if (file_info == NULL || S_ISDIR(file_info->mode)) {
         return -EINVAL;
     }
@@ -61,17 +61,17 @@ ssize_t rafs_read(struct file *filp, char *buffer, size_t len, loff_t *offset) {
 }
 
 
-ssize_t rafs_write(struct file *filp, const char *buffer, size_t len, loff_t *offset) {
+ssize_t rafs_write(struct file *file, const char *buffer, size_t len, loff_t *offset) {
     struct rafs_file_info *file_info;
     char *kernel_buffer;
     ssize_t bytes_written;
     loff_t pos = *offset;
 
-    if (filp == NULL || filp->f_inode == NULL) {
+    if (file == NULL || file->f_inode == NULL) {
         return -EINVAL;
     }
 
-    file_info = (struct rafs_file_info *)filp->f_inode->i_private;
+    file_info = (struct rafs_file_info *)file->f_inode->i_private;
     if (file_info == NULL || S_ISDIR(file_info->mode)) {
         return -EINVAL;
     }
@@ -100,8 +100,8 @@ ssize_t rafs_write(struct file *filp, const char *buffer, size_t len, loff_t *of
 
     *offset = pos + bytes_written;
 
-    filp->f_inode->i_size = rafs_backend_ops.get_size(file_info);
-    filp->f_inode->i_mtime = filp->f_inode->i_ctime = current_time(filp->f_inode);
+    file->f_inode->i_size = rafs_backend_ops.get_size(file_info);
+    file->f_inode->i_mtime = file->f_inode->i_ctime = current_time(file->f_inode);
 
     return bytes_written;
 }

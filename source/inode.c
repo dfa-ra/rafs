@@ -88,7 +88,7 @@ int rafs_create(
     struct rafs_file_info *file_info;
     struct inode *inode;
 
-    file_info = rafs_backend_ops.create(parent_inode->i_sb, parent_ino, name, mode | S_IFREG);
+    file_info = rafs_backend_ops.create(parent_inode->i_sb, parent_ino, name, (mode & 0777) | S_IFREG);
     if (file_info == NULL) {
         return -EEXIST;
     }
@@ -141,7 +141,7 @@ int rafs_mkdir(
     struct rafs_file_info *file_info;
     struct inode *inode;
 
-    file_info = rafs_backend_ops.create(parent_inode->i_sb, parent_ino, name, mode | S_IFDIR);
+    file_info = rafs_backend_ops.create(parent_inode->i_sb, parent_ino, name, (mode & 0777) | S_IFDIR);
     if (file_info == NULL) {
         return -EEXIST;
     }

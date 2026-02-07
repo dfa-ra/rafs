@@ -35,6 +35,5 @@ struct rafs_backend_ops {
     void (*free_file_info)(struct rafs_file_info *file_info);
 };
 
-extern struct rafs_backend_ops rafs_backend_ops;
  
 #endif
