@@ -18,6 +18,7 @@ struct rafs_backend_ops rafs_backend_ops = {
     .lookup = ram_backend_lookup,
     .create = ram_backend_create,
     .unlink = ram_backend_unlink,
+    .rmdir = ram_backend_rmdir,
     .link = ram_backend_link,
     .is_empty_dir = ram_backend_is_empty_dir,
     .read = ram_backend_read,
@@ -25,6 +26,7 @@ struct rafs_backend_ops rafs_backend_ops = {
     .get_size = ram_backend_get_size,
     .readdir = ram_backend_readdir,
     .free_file_info = ram_backend_free_file_info,
+    .get_num_dir = ram_backend_get_num_dir
 #endif
 #ifdef RAFS_BACKEND_NET
     .init = net_backend_init,
@@ -32,6 +34,7 @@ struct rafs_backend_ops rafs_backend_ops = {
     .lookup = net_backend_lookup,
     .create = net_backend_create,
     .unlink = net_backend_unlink,
+    .rmdir = net_backend_rmdir,
     .link = net_backend_link,
     .is_empty_dir = net_backend_is_empty_dir,
     .read = net_backend_read,
@@ -39,5 +42,6 @@ struct rafs_backend_ops rafs_backend_ops = {
     .get_size = net_backend_get_size,
     .readdir = net_backend_readdir,
     .free_file_info = net_backend_free_file_info,
+    .get_num_dir = net_backend_get_num_dir
 #endif
 };

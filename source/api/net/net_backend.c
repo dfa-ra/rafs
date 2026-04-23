@@ -15,6 +15,7 @@ struct lookup_response {
     uint32_t ino;      // I
     uint32_t mode;     // I
     uint64_t size;     // Q
+    uint32_t nlink;     // I
 };
 
 struct readdir_entry {
@@ -40,7 +41,7 @@ static const char* get_token(struct super_block *sb) {
     return "default_token";
 }
 
-static struct rafs_file_info* net_create_file_info(struct super_block *sb, ino_t ino, umode_t mode, size_t size) {
+static struct rafs_file_info* net_create_file_info(struct super_block *sb, ino_t ino, umode_t mode, size_t size, int nlink) {
     struct rafs_file_info *info;
 
     info = kmalloc(sizeof(struct rafs_file_info), GFP_KERNEL);
@@ -48,7 +49,7 @@ static struct rafs_file_info* net_create_file_info(struct super_block *sb, ino_t
         return NULL;
     }
 
-    info->ref_count = 1;
+    info->ref_count = nlink;
     info->ino = ino;
     info->mode = mode;
     info->size = size;
@@ -158,7 +159,7 @@ struct rafs_file_info* net_backend_lookup(struct super_block *sb, ino_t parent_i
     params[0] = parent_str;
     params[1] = name_param;
     NET_LOG("lookup: params[0]='%s', params[1]='%s'\n", params[0], params[1]);
-    result = rafs_http_call(get_token(sb), "lookup", (char*)&response, 16, 2,
+    result = rafs_http_call(get_token(sb), "lookup", (char*)&response, 20, 2,
                            params[0], params[1]);
 
     kfree(encoded_name);
@@ -168,8 +169,8 @@ struct rafs_file_info* net_backend_lookup(struct super_block *sb, ino_t parent_i
         return NULL;
     }
 
-    NET_LOG("lookup: success, ino=%u, mode=%u, size=%llu\n", response.ino, response.mode, response.size);
-    return net_create_file_info(sb, response.ino, response.mode, response.size);
+    NET_LOG("lookup: success, ino=%u, mode=%u, size=%llu, mode=%u\n", response.ino, response.mode, response.size, response.nlink);
+    return net_create_file_info(sb, response.ino, response.mode, response.size, response.nlink);
 }
 
 struct rafs_file_info* net_backend_create(struct super_block *sb, ino_t parent_ino, const char *name, umode_t mode) {
@@ -177,7 +178,7 @@ struct rafs_file_info* net_backend_create(struct super_block *sb, ino_t parent_i
 
     if (parent_ino == 0 && (name == NULL || *name == '\0')) {
         NET_LOG("create: root directory case\n");
-        return net_create_file_info(sb, 1000, mode, 0);
+        return net_create_file_info(sb, 1000, mode, 0, 1);
     }
 
     char *encoded_name;
@@ -211,7 +212,7 @@ struct rafs_file_info* net_backend_create(struct super_block *sb, ino_t parent_i
     }
 
     NET_LOG("create: success, ino=%u, mode=%u, size=%llu\n", response.ino, response.mode, response.size);
-    return net_create_file_info(sb, response.ino, response.mode, response.size);
+    return net_create_file_info(sb, response.ino, response.mode, response.size, 1);
 }
 
 
@@ -232,6 +233,30 @@ int net_backend_unlink(struct super_block *sb, ino_t parent_ino, const char *nam
     snprintf(parent_str, sizeof(parent_str), "parent_id=%lu", parent_ino);
     snprintf(name_param, sizeof(name_param), "name=%s", encoded_name);
     result = rafs_http_call(get_token(sb), "unlink", NULL, 0, 2,
+                           parent_str, name_param);
+
+    kfree(encoded_name);
+
+    return result < 0 ? result : 0;
+}
+
+int net_backend_rmdir(struct super_block *sb, ino_t parent_ino, const char *name) {
+    char *encoded_name;
+    int64_t result;
+
+    if (name == NULL) {
+        return -EINVAL;
+    }
+
+    encoded_name = encode_string(name);
+    if (encoded_name == NULL) {
+        return -ENOMEM;
+    }
+
+    char parent_str[32], name_param[256+10];
+    snprintf(parent_str, sizeof(parent_str), "parent_id=%lu", parent_ino);
+    snprintf(name_param, sizeof(name_param), "name=%s", encoded_name);
+    result = rafs_http_call(get_token(sb), "rmdir", NULL, 0, 2,
                            parent_str, name_param);
 
     kfree(encoded_name);
@@ -294,6 +319,24 @@ int net_backend_is_empty_dir(struct super_block *sb, ino_t dir_ino) {
 
     return result < 0 ? result : (result == 0 ? 1 : 0);
 }
+
+int net_backend_get_num_dir(struct super_block *sb, ino_t dir_ino)
+{
+    int64_t result;
+    uint32_t response = 0;
+    char id_str[32];
+
+    snprintf(id_str, sizeof(id_str), "id=%lu", dir_ino);
+
+    result = rafs_http_call(get_token(sb), "get_num_dir", (char *)&response, sizeof(response), 1, id_str);
+
+    if (result < 0)
+      return (int)result;
+    response = le32_to_cpu(response);
+
+    return (int)response;
+}
+
 
 ssize_t net_backend_read(struct rafs_file_info *file, char *buffer, size_t len, loff_t offset) {
     char *response_buffer;
@@ -428,3 +471,4 @@ int net_backend_readdir(struct super_block *sb, ino_t dir_ino, struct dir_contex
     NET_LOG("readdir: finished\n");
     return 0;
 }
+

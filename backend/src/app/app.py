@@ -92,6 +92,11 @@ def api_dispatch(
                     return pack_response(-1, b"")
                 ret, body = fs.handle_is_empty_dir(db, token, int(id))
 
+            elif cmd == "get_num_dir":
+                if id is None:
+                    return pack_response(-1, b"")
+                ret, body = fs.get_num_dir(db, token, int(id))
+
             else:
                 return pack_response(-1, b"")
 

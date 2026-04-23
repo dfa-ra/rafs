@@ -1,7 +1,7 @@
 #include "rafs.h"
 #include "api/api.h"
 
-extern struct inode* rafs_get_inode(struct super_block* sb, const struct inode* dir, umode_t mode, int i_ino);
+extern struct inode* rafs_get_inode(struct super_block* sb, const struct inode* dir, umode_t mode, int i_ino, int ref_count);
 extern struct inode_operations rafs_inode_ops;
 extern struct file_operations rafs_dir_ops;
 
@@ -23,16 +23,16 @@ int rafs_fill_super(struct super_block *sb, void *data, int silent) {
         return -ENOMEM;
     }
 
-    inode = rafs_get_inode(sb, NULL, file_info->mode, file_info->ino);
+    inode = rafs_get_inode(sb, NULL, file_info->mode, file_info->ino, 2);
     if (inode == NULL) {
         rafs_backend_ops.free_file_info(file_info);
         rafs_backend_ops.destroy(sb);
         return -ENOMEM;
     }
-
     inode->i_op = &rafs_inode_ops;
     inode->i_fop = &rafs_dir_ops;
     inode->i_private = file_info;
+    set_nlink(inode, rafs_backend_ops.get_num_dir(sb, file_info->ino) + 2);
 
     sb->s_root = d_make_root(inode);
     if (sb->s_root == NULL) {

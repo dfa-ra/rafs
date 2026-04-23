@@ -18,7 +18,7 @@ struct rafs_file_info* ram_create_file_info(struct super_block *sb, struct ram_i
         return NULL;
     }
 
-    info->ref_count = 1;
+    info->ref_count = ram_inode->nlink;
     info->ino = ram_inode->ino;
     info->mode = ram_inode->mode;
     info->size = ram_inode->size;
@@ -222,10 +222,77 @@ int ram_backend_unlink(struct super_block *sb, ino_t parent_ino, const char *nam
 
     inode = dentry_to_delete->inode;
 
+    if (S_ISDIR(inode->mode)) {
+        up_write(&sbi->rwsem);
+        return -EISDIR;
+    }
+
     list_del(&dentry_to_delete->list);
     kfree(dentry_to_delete);
 
     inode->nlink--;
+
+    if (inode->nlink == 0) {
+        list_del(&inode->list);
+        if (inode->data != NULL) {
+            kfree(inode->data);
+        }
+        kfree(inode);
+    }
+
+    up_write(&sbi->rwsem);
+    return 0;
+}
+
+int ram_backend_rmdir(struct super_block *sb, ino_t parent_ino, const char *name) {
+    struct ram_sb_info *sbi = ram_sb_info(sb);
+    struct ram_dentry *dentry_to_delete = NULL;
+    struct ram_dentry *dentry;
+    struct ram_inode *inode;
+    struct ram_inode *parent_inode;
+
+    if (sbi == NULL || name == NULL) {
+        return -EINVAL;
+    }
+
+    down_write(&sbi->rwsem);
+
+    list_for_each_entry(dentry_to_delete, &sbi->dentry_list, list) {
+        if (dentry_to_delete->parent_ino == parent_ino && strcmp(dentry_to_delete->name, name) == 0) {
+            break;
+        }
+    }
+
+    if (dentry_to_delete == NULL) {
+        up_write(&sbi->rwsem);
+        return -ENOENT;
+    }
+
+    inode = dentry_to_delete->inode;
+
+    if (!S_ISDIR(inode->mode)) {
+        up_write(&sbi->rwsem);
+        return -ENOTDIR;
+    }
+
+    list_for_each_entry(dentry, &sbi->dentry_list, list) {
+        if (dentry->parent_ino == inode->ino) {
+            up_write(&sbi->rwsem);
+            return -ENOTEMPTY;
+        }
+    }
+
+    list_del(&dentry_to_delete->list);
+    kfree(dentry_to_delete);
+
+    inode->nlink--;
+
+    list_for_each_entry(parent_inode, &sbi->inode_list, list) {
+        if (parent_inode->ino == parent_ino) {
+            parent_inode->nlink--;
+            break;
+        }
+    }
 
     if (inode->nlink == 0) {
         list_del(&inode->list);
@@ -292,6 +359,27 @@ int ram_backend_is_empty_dir(struct super_block *sb, ino_t dir_ino) {
     }
     up_read(&sbi->rwsem);
     return 1;
+}
+
+int ram_backend_get_num_dir(struct super_block *sb, ino_t dir_ino) {
+    struct ram_sb_info *sbi = ram_sb_info(sb);
+    struct ram_dentry *dentry;
+    int count = 0;
+
+    if (!sbi)
+        return 0;
+
+    down_read(&sbi->rwsem);
+    list_for_each_entry(dentry, &sbi->dentry_list, list) {
+      if (dentry->parent_ino != dir_ino)
+          continue;
+
+      if (S_ISDIR(dentry->inode->mode))
+          count++;
+    }
+    up_read(&sbi->rwsem);
+
+    return count;
 }
 
 ssize_t ram_backend_read(struct rafs_file_info *file_info, char *buffer, size_t len, loff_t offset) {
@@ -448,17 +536,3 @@ int ram_backend_readdir(struct super_block *sb, ino_t dir_ino, struct dir_contex
     return stored;
 }
 
-struct rafs_backend_ops ram_backend_ops = {
-    .init = ram_backend_init,
-    .destroy = ram_backend_destroy,
-    .lookup = ram_backend_lookup,
-    .create = ram_backend_create,
-    .unlink = ram_backend_unlink,
-    .link = ram_backend_link,
-    .is_empty_dir = ram_backend_is_empty_dir,
-    .read = ram_backend_read,
-    .write = ram_backend_write,
-    .get_size = ram_backend_get_size,
-    .readdir = ram_backend_readdir,
-    .free_file_info = ram_backend_free_file_info,
-};

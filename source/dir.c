@@ -2,16 +2,16 @@
 #include "api/api.h"
 #include <linux/string.h>
 
-int rafs_iterate(struct file* filp, struct dir_context* ctx) {
+int rafs_iterate(struct file* file, struct dir_context* ctx) {
     struct dentry* dentry;
     struct inode* inode;
     ino_t ino_val;
 
-    if (filp == NULL || ctx == NULL) {
+    if (file == NULL || ctx == NULL) {
         return 0;
     }
 
-    dentry = filp->f_path.dentry;
+    dentry = file->f_path.dentry;
     if (dentry == NULL) {
         return 0;
     }
